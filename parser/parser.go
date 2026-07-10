@@ -3,6 +3,8 @@ package parser
 import (
 	"fmt"
 	"strings"
+
+	"github.com/banshanhanfu/ws-lang/translations"
 )
 
 // Node represents a parsed KV line node
@@ -28,6 +30,8 @@ func Parse(input string) (*ParseResult, error) {
 	result := &ParseResult{}
 	var stack []*Node
 	var currentParent *Node
+
+	tm := translations.GetManager()
 
 	for i, line := range lines {
 		lineNum := i + 1
@@ -62,7 +66,7 @@ func Parse(input string) (*ParseResult, error) {
 		} else {
 			result.Nodes = append(result.Nodes, node)
 			// First top-level key is treated as task name key
-			if len(result.Nodes) == 1 && (node.Key == "task" || node.Key == "任务" || node.Key == "タスク" || node.Key == "name") {
+			if len(result.Nodes) == 1 && tm.IsCanonical(node.Key, "task", "name") {
 				result.TaskName = node.Value
 			}
 		}
@@ -90,14 +94,16 @@ func countIndent(line string) int {
 
 func parseLine(line string, lineNum int) (*Node, error) {
 	node := &Node{LineNum: lineNum}
+	tm := translations.GetManager()
 
 	// -> output: xxx  (output port definition)
 	if strings.HasPrefix(line, "->") {
 		rest := strings.TrimPrefix(line, "->")
 		rest = strings.TrimSpace(rest)
 
-		if strings.HasPrefix(rest, "output") || strings.HasPrefix(rest, "输出") {
-			parts := splitKV(rest)
+		// Check if first part is an output keyword
+		parts := splitKV(rest)
+		if len(parts) >= 1 && tm.IsCanonical(parts[0], "output") {
 			if len(parts) == 2 {
 				node.Key = "output"
 				node.Value = parts[1]
@@ -105,8 +111,7 @@ func parseLine(line string, lineNum int) (*Node, error) {
 				return node, nil
 			}
 		}
-		// -> output: name  (inline output)
-		parts := splitKV(rest)
+		// -> key: value (inline output)
 		if len(parts) == 2 {
 			node.Key = parts[0]
 			node.Value = parts[1]
@@ -119,8 +124,7 @@ func parseLine(line string, lineNum int) (*Node, error) {
 	parts := splitKV(line)
 	if len(parts) < 2 {
 		// Single word on its own line could be a block start
-		if len(parts) == 1 && (parts[0] == "task" || parts[0] == "任务" || parts[0] == "タスク" ||
-			parts[0] == "step" || parts[0] == "步骤" || parts[0] == "ステップ") {
+		if len(parts) == 1 && tm.IsCanonical(parts[0], "task", "step") {
 			node.Key = parts[0]
 			return node, nil
 		}
@@ -201,55 +205,7 @@ func splitInlinePairs(inner string) []string {
 		}
 	}
 	if start < len(inner) {
-		last := strings.TrimSpace(inner[start:])
-		if last != "" {
-			pairs = append(pairs, last)
-		}
+		pairs = append(pairs, strings.TrimSpace(inner[start:]))
 	}
 	return pairs
-}
-
-// ToYAML converts parsed nodes to YAML string with proper nesting
-func (pr *ParseResult) ToYAML() string {
-	var b strings.Builder
-	for i, node := range pr.Nodes {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		writeNodeYAML(&b, node, 0, true)
-	}
-	return b.String()
-}
-
-func writeNodeYAML(b *strings.Builder, node *Node, depth int, isList bool) {
-	indent := strings.Repeat("  ", depth)
-
-	if node.IsOutput {
-		b.WriteString(fmt.Sprintf("%soutputs:\n", indent))
-		b.WriteString(fmt.Sprintf("%s  - name: %s\n", indent, node.Value))
-		b.WriteString(fmt.Sprintf("%s    from: stdout.text\n", indent))
-		return
-	}
-
-	if isList {
-		b.WriteString(fmt.Sprintf("%s- id: %s\n", indent, node.Key))
-	} else {
-		b.WriteString(fmt.Sprintf("%s%s:", indent, node.Key))
-		if len(node.Children) == 0 {
-			if node.IsArray {
-				b.WriteString(fmt.Sprintf(" %s", node.Value))
-			} else if node.IsRef {
-				b.WriteString(fmt.Sprintf(" %s", node.Value))
-			} else {
-				b.WriteString(fmt.Sprintf(" %s", node.Value))
-			}
-			b.WriteString("\n")
-		} else {
-			b.WriteString("\n")
-		}
-	}
-
-	for _, child := range node.Children {
-		writeNodeYAML(b, child, depth+1, false)
-	}
 }

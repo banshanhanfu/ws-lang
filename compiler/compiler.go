@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/banshanhanfu/ws-lang/parser"
+	"github.com/banshanhanfu/ws-lang/translations"
 )
 
 // InstructionSet is the canonical YAML instruction set format
@@ -21,14 +22,14 @@ type InstructionSet struct {
 
 // Step represents a single execution step
 type Step struct {
-	ID        string     `yaml:"id" json:"id"`
-	Name      string     `yaml:"name" json:"name"`
-	Cap       string     `yaml:"cap" json:"cap"`
-	Input     *Input     `yaml:"input,omitempty" json:"input,omitempty"`
+	ID        string            `yaml:"id" json:"id"`
+	Name      string            `yaml:"name" json:"name"`
+	Cap       string            `yaml:"cap" json:"cap"`
+	Input     *Input            `yaml:"input,omitempty" json:"input,omitempty"`
 	Args      map[string]string `yaml:"args,omitempty" json:"args,omitempty"`
-	Outputs   []*Output  `yaml:"outputs,omitempty" json:"outputs,omitempty"`
-	DependsOn []string   `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
-	OnError   *ErrorHandling `yaml:"on_error,omitempty" json:"on_error,omitempty"`
+	Outputs   []*Output         `yaml:"outputs,omitempty" json:"outputs,omitempty"`
+	DependsOn []string          `yaml:"depends_on,omitempty" json:"depends_on,omitempty"`
+	OnError   *ErrorHandling    `yaml:"on_error,omitempty" json:"on_error,omitempty"`
 }
 
 // Input describes step input source
@@ -53,34 +54,15 @@ type ErrorHandling struct {
 	Interval   int    `yaml:"interval,omitempty" json:"interval,omitempty"`
 }
 
-// Translation tables
-var translations = map[string]map[string]string{
-	"zh": {
-		"任务": "task", "步骤": "step", "能力": "cap",
-		"来自": "from", "合并": "merge", "参数": "args",
-		"输入": "input", "输出": "output", "出错时": "on_error",
-		"重试": "retry", "忽略": "ignore", "停止": "stop",
-		"名称": "name", "描述": "description", "状态": "status",
-		"结果": "result", "错误": "error", "依赖": "depends_on",
-		"来源": "sources",
-	},
-	"ja": {
-		"タスク": "task", "ステップ": "step", "能力": "cap",
-		"呼出": "cap", "引数": "args", "入力": "input",
-		"出力": "output", "エラー時": "on_error", "リトライ": "retry",
-		"無視": "ignore", "停止": "stop",
-	},
-}
-
 func main() {
-	lang := flag.String("lang", "en", "Input language (en/zh/ja)")
+	lang := flag.String("lang", "en", "Input language code (en/zh/ja/es/ar/bn/hi/fr/pt/ru)")
 	outputJSON := flag.Bool("json", false, "Output in JSON format instead of YAML")
 	outputFile := flag.String("o", "", "Output file path (default: stdout)")
 	flag.Parse()
 
 	args := flag.Args()
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: compiler [-lang en|zh|ja] [-json] [-o output.yaml] <input.ws>\n")
+		fmt.Fprintf(os.Stderr, "Usage: compiler [-lang en|zh|ja|es|ar|bn|hi|fr|pt|ru] [-json] [-o output.yaml] <input.ws>\n")
 		os.Exit(1)
 	}
 
@@ -95,9 +77,9 @@ func main() {
 
 	content := string(data)
 
-	// If language is not English, apply translation
+	// If language is not English, apply translation via the shared manager
 	if *lang != "en" {
-		content = translateContent(content, *lang)
+		content = translations.TranslateContent(content, *lang)
 	}
 
 	// Parse KV format
@@ -133,34 +115,6 @@ func main() {
 	}
 }
 
-func translateContent(content string, lang string) string {
-	table, ok := translations[lang]
-	if !ok {
-		return content
-	}
-
-	result := content
-	// Sort keys by length (longest first) to avoid partial replacements
-	type kv struct{ k, v string }
-	var pairs []kv
-	for k, v := range table {
-		pairs = append(pairs, kv{k, v})
-	}
-	// Sort by key length descending
-	for i := 0; i < len(pairs); i++ {
-		for j := i + 1; j < len(pairs); j++ {
-			if len(pairs[i].k) < len(pairs[j].k) {
-				pairs[i], pairs[j] = pairs[j], pairs[i]
-			}
-		}
-	}
-
-	for _, p := range pairs {
-		result = strings.ReplaceAll(result, p.k, p.v)
-	}
-	return result
-}
-
 func compile(result *parser.ParseResult, inputPath string) *InstructionSet {
 	baseName := filepath.Base(inputPath)
 	baseName = strings.TrimSuffix(baseName, filepath.Ext(baseName))
@@ -175,15 +129,17 @@ func compile(result *parser.ParseResult, inputPath string) *InstructionSet {
 	// Build a name→id mapping for dependency resolution
 	stepNameToID := make(map[string]string)
 
+	tm := translations.GetManager()
+
 	// First pass: register all step names
 	for _, node := range result.Nodes {
-		stepIndex = registerStepNames(node, &stepIndex, stepNameToID)
+		stepIndex = registerStepNames(node, &stepIndex, stepNameToID, tm)
 	}
 
 	// Second pass: compile steps with dependency resolution
 	stepIndex = 0
 	for _, node := range result.Nodes {
-		stepIndex = compileNode(node, is, &stepIndex, stepNameToID)
+		stepIndex = compileNode(node, is, &stepIndex, stepNameToID, tm)
 	}
 
 	if is.Name == "" {
@@ -193,9 +149,8 @@ func compile(result *parser.ParseResult, inputPath string) *InstructionSet {
 	return is
 }
 
-func registerStepNames(node *parser.Node, stepIndex *int, nameToID map[string]string) int {
-	// Top-level step nodes
-	if node.Key == "step" || node.Key == "steps" || node.Key == "步骤" || node.Key == "ステップ" {
+func registerStepNames(node *parser.Node, stepIndex *int, nameToID map[string]string, tm *translations.Manager) int {
+	if tm.IsCanonical(node.Key, "step") {
 		*stepIndex++
 		id := fmt.Sprintf("s-%d", *stepIndex)
 		if node.Value != "" {
@@ -204,9 +159,8 @@ func registerStepNames(node *parser.Node, stepIndex *int, nameToID map[string]st
 		return *stepIndex
 	}
 
-	// Task wrapper children
 	for _, child := range node.Children {
-		if child.Key == "step" || child.Key == "steps" || child.Key == "步骤" || child.Key == "ステップ" {
+		if tm.IsCanonical(child.Key, "step") {
 			*stepIndex++
 			id := fmt.Sprintf("s-%d", *stepIndex)
 			if child.Value != "" {
@@ -217,73 +171,79 @@ func registerStepNames(node *parser.Node, stepIndex *int, nameToID map[string]st
 	return *stepIndex
 }
 
-func compileNode(node *parser.Node, is *InstructionSet, stepIndex *int, nameToID map[string]string) int {
-	// Top-level step nodes
-	if node.Key == "step" || node.Key == "steps" || node.Key == "步骤" || node.Key == "ステップ" {
+func compileNode(node *parser.Node, is *InstructionSet, stepIndex *int, nameToID map[string]string, tm *translations.Manager) int {
+	if tm.IsCanonical(node.Key, "step") {
 		*stepIndex++
-		step := buildStep(node, *stepIndex, nameToID)
+		step := buildStep(node, *stepIndex, nameToID, tm)
 		is.Steps = append(is.Steps, step)
 		return *stepIndex
 	}
 
-	// Task wrapper: process children
 	for _, child := range node.Children {
-		if child.Key == "step" || child.Key == "steps" || child.Key == "步骤" || child.Key == "ステップ" {
+		if tm.IsCanonical(child.Key, "step") {
 			*stepIndex++
-			step := buildStep(child, *stepIndex, nameToID)
+			step := buildStep(child, *stepIndex, nameToID, tm)
 			is.Steps = append(is.Steps, step)
 		} else {
-			// Nested structure, recurse
-			*stepIndex = compileNode(child, is, stepIndex, nameToID)
+			*stepIndex = compileNode(child, is, stepIndex, nameToID, tm)
 		}
 	}
 	return *stepIndex
 }
 
-func buildStep(node *parser.Node, index int, nameToID map[string]string) *Step {
+func buildStep(node *parser.Node, index int, nameToID map[string]string, tm *translations.Manager) *Step {
 	step := &Step{
 		ID:   fmt.Sprintf("s-%d", index),
 		Name: node.Value,
 	}
 
 	for _, child := range node.Children {
-		switch child.Key {
-		case "cap", "capability", "能力":
+		if tm.IsCanonical(child.Key, "cap", "capability") {
 			step.Cap = child.Value
-		case "input", "输入":
+		} else if tm.IsCanonical(child.Key, "input") {
 			step.Input = compileInput(child, nameToID)
-		case "on_error", "出错时", "エラー時":
-			step.OnError = compileErrorHandling(child.Value)
-		case "output", "输出", "outputs":
+		} else if tm.IsCanonical(child.Key, "on_error") {
+			step.OnError = compileErrorHandling(child.Value, tm)
+		} else if tm.IsCanonical(child.Key, "output") {
 			// Handled by nodeOutputs, skip args
-		default:
-			// Skip children that are output port definitions
+		} else {
+			// Skip children that are output port definitions (-> name)
 			if child.IsOutput {
 				continue
 			}
-			if step.Args == nil {
+			// Handle inline { key: value } block children
+			if len(child.Children) > 0 && tm.IsCanonical(child.Key, "args") {
+				if step.Args == nil {
+					step.Args = make(map[string]string)
+				}
+				for _, argChild := range child.Children {
+					step.Args[argChild.Key] = argChild.Value
+				}
+			} else if step.Args == nil {
 				step.Args = make(map[string]string)
+				step.Args[child.Key] = child.Value
+			} else {
+				step.Args[child.Key] = child.Value
 			}
-			step.Args[child.Key] = child.Value
 		}
 	}
 
 	// Set default output
-	if step.Cap != "" && len(nodeOutputs(node)) == 0 {
+	if step.Cap != "" && len(nodeOutputs(node, tm)) == 0 {
 		step.Outputs = []*Output{
 			{Name: "default", From: "stdout.text"},
 		}
 	} else {
-		step.Outputs = nodeOutputs(node)
+		step.Outputs = nodeOutputs(node, tm)
 	}
 
 	return step
 }
 
-func nodeOutputs(node *parser.Node) []*Output {
+func nodeOutputs(node *parser.Node, tm *translations.Manager) []*Output {
 	var outputs []*Output
 	for _, child := range node.Children {
-		if child.IsOutput || child.Key == "output" || child.Key == "输出" {
+		if child.IsOutput || tm.IsCanonical(child.Key, "output") {
 			outputs = append(outputs, &Output{
 				Name: child.Value,
 				From: "stdout.text",
@@ -328,30 +288,40 @@ func compileInput(node *parser.Node, nameToID map[string]string) *Input {
 }
 
 func resolveStepRef(refName string, nameToID map[string]string) string {
-	// Check if it's a known step name
 	if id, ok := nameToID[refName]; ok {
 		return id
 	}
-	// Also check without underscores/dots variations
 	for name, id := range nameToID {
 		if strings.ReplaceAll(name, " ", "") == strings.ReplaceAll(refName, " ", "") {
 			return id
 		}
 	}
-	// Return original name if not found (it might be a step ID directly)
 	return refName
 }
 
-func compileErrorHandling(value string) *ErrorHandling {
+func compileErrorHandling(value string, tm *translations.Manager) *ErrorHandling {
 	eh := &ErrorHandling{Action: "stop"}
 
-	// Parse patterns like: retry(3, 5s), ignore, stop
-	if strings.HasPrefix(value, "retry") || strings.HasPrefix(value, "重试") {
+	// Check if action is retry (native or canonical)
+	isRetry := tm.IsCanonical("retry", "retry") && (value == "retry" || strings.HasPrefix(value, "retry("))
+	// Also check native keywords
+	if tm.IsCanonical("retry", "retry") {
+		for _, native := range tm.NativeKeywords("retry") {
+			if value == native || strings.HasPrefix(value, native+"(") {
+				isRetry = true
+				break
+			}
+		}
+	}
+	if value == "retry" || strings.HasPrefix(value, "retry(") {
+		isRetry = true
+	}
+
+	if isRetry {
 		eh.Action = "retry"
 		eh.MaxRetries = 3
 		eh.Interval = 5
 
-		// Extract (n, ms)
 		if idx := strings.Index(value, "("); idx > 0 {
 			end := strings.Index(value, ")")
 			if end < 0 {
@@ -372,9 +342,9 @@ func compileErrorHandling(value string) *ErrorHandling {
 				}
 			}
 		}
-	} else if value == "ignore" || value == "忽略" {
+	} else if tm.IsCanonical(value, "ignore") || value == "ignore" {
 		eh.Action = "ignore"
-	} else if value == "stop" || value == "停止" {
+	} else if tm.IsCanonical(value, "stop") || value == "stop" {
 		eh.Action = "stop"
 	}
 
@@ -384,7 +354,6 @@ func compileErrorHandling(value string) *ErrorHandling {
 func toYAML(is *InstructionSet) string {
 	var b strings.Builder
 
-	// Header
 	b.WriteString(fmt.Sprintf("# ws-lang instruction set\n"))
 	b.WriteString(fmt.Sprintf("# generated by ws-lang compiler\n"))
 	b.WriteString(fmt.Sprintf("---\n"))
@@ -398,10 +367,14 @@ func toYAML(is *InstructionSet) string {
 	for _, step := range is.Steps {
 		b.WriteString(fmt.Sprintf("  - id: %s\n", step.ID))
 		b.WriteString(fmt.Sprintf("    name: %s\n", step.Name))
-		b.WriteString(fmt.Sprintf("    cap: %s\n", step.Cap))
+
+		if step.Cap != "" {
+			b.WriteString(fmt.Sprintf("    cap: %s\n", step.Cap))
+		}
 
 		if step.Input != nil {
-			writeInputYAML(&b, step.Input, 4)
+			b.WriteString(fmt.Sprintf("    input:\n"))
+			writeInput(&b, step.Input, "      ")
 		}
 
 		if len(step.Args) > 0 {
@@ -419,6 +392,13 @@ func toYAML(is *InstructionSet) string {
 			}
 		}
 
+		if len(step.DependsOn) > 0 {
+			b.WriteString(fmt.Sprintf("    depends_on:\n"))
+			for _, d := range step.DependsOn {
+				b.WriteString(fmt.Sprintf("      - %s\n", d))
+			}
+		}
+
 		if step.OnError != nil {
 			b.WriteString(fmt.Sprintf("    on_error:\n"))
 			b.WriteString(fmt.Sprintf("      action: %s\n", step.OnError.Action))
@@ -429,43 +409,27 @@ func toYAML(is *InstructionSet) string {
 				b.WriteString(fmt.Sprintf("      interval: %d\n", step.OnError.Interval))
 			}
 		}
-
-		if len(step.DependsOn) > 0 {
-			b.WriteString(fmt.Sprintf("    depends_on:\n"))
-			for _, d := range step.DependsOn {
-				b.WriteString(fmt.Sprintf("      - %s\n", d))
-			}
-		}
-
-		b.WriteString("\n")
 	}
 
 	return b.String()
 }
 
-func writeInputYAML(b *strings.Builder, input *Input, indent int) {
-	prefix := strings.Repeat(" ", indent)
-
+func writeInput(b *strings.Builder, input *Input, indent string) {
+	b.WriteString(fmt.Sprintf("%stype: %s\n", indent, input.Type))
 	switch input.Type {
-	case "literal":
-		b.WriteString(fmt.Sprintf("%sinput:\n", prefix))
-		b.WriteString(fmt.Sprintf("%s  type: literal\n", prefix))
-		b.WriteString(fmt.Sprintf("%s  value: %s\n", prefix, input.Value))
 	case "file":
-		b.WriteString(fmt.Sprintf("%sinput:\n", prefix))
-		b.WriteString(fmt.Sprintf("%s  type: file\n", prefix))
-		b.WriteString(fmt.Sprintf("%s  path: %s\n", prefix, input.Path))
+		b.WriteString(fmt.Sprintf("%spath: %s\n", indent, input.Path))
 	case "ref":
-		b.WriteString(fmt.Sprintf("%sinput:\n", prefix))
-		b.WriteString(fmt.Sprintf("%s  type: ref\n", prefix))
-		b.WriteString(fmt.Sprintf("%s  from: %s\n", prefix, input.From))
+		b.WriteString(fmt.Sprintf("%sfrom: %s\n", indent, input.From))
+	case "literal":
+		b.WriteString(fmt.Sprintf("%svalue: %s\n", indent, input.Value))
 	case "merge":
-		b.WriteString(fmt.Sprintf("%sinput:\n", prefix))
-		b.WriteString(fmt.Sprintf("%s  type: merge\n", prefix))
-		b.WriteString(fmt.Sprintf("%s  sources:\n", prefix))
-		for _, src := range input.Sources {
-			b.WriteString(fmt.Sprintf("%s    - type: ref\n", prefix))
-			b.WriteString(fmt.Sprintf("%s      from: %s\n", prefix, src.From))
+		b.WriteString(fmt.Sprintf("%ssources:\n", indent))
+		for _, s := range input.Sources {
+			b.WriteString(fmt.Sprintf("%s  - type: %s\n", indent, s.Type))
+			if s.From != "" {
+				b.WriteString(fmt.Sprintf("%s    from: %s\n", indent, s.From))
+			}
 		}
 	}
 }
