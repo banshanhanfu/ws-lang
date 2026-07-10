@@ -7,22 +7,52 @@
 
 ### 🌍 Multi-Language by Design
 
-ws-lang is **not** an English-only language. Keywords can be written in any human language, and a deterministic Translation Layer maps them to a canonical internal form:
+ws-lang is **not** an English-only language. Keywords can be written in any human language, and a deterministic Translation Layer maps them to a canonical internal form.
+
+**10 languages currently supported:**
+
+| Language | Code | Example |
+|:---------|:----:|:--------|
+| 🇬🇧 English | `en` (default) | `task`, `step`, `cap`, `retry`, `merge` |
+| 🇨🇳 Chinese | `zh` | `任务`, `步骤`, `能力`, `重试`, `合并` |
+| 🇯🇵 Japanese | `ja` | `タスク`, `ステップ`, `呼出`, `リトライ`, `結合` |
+| 🇪🇸 Spanish | `es` | `tarea`, `paso`, `capacidad`, `reintentar`, `combinar` |
+| 🇫🇷 French | `fr` | `tâche`, `étape`, `capacité`, `réessayer`, `fusionner` |
+| 🇵🇹 Portuguese | `pt` | `tarefa`, `etapa`, `capacidade`, `retentar`, `mesclar` |
+| 🇷🇺 Russian | `ru` | `задача`, `шаг`, `возможность`, `повторить`, `объединить` |
+| 🇮🇳 Hindi | `hi` | `कार्य`, `चरण`, `क्षमता`, `पुनःप्रयास`, `विलय` |
+| 🇧🇩 Bengali | `bn` | `কাজ`, `ধাপ`, `ক্ষমতা`, `পুনরায়_চেষ্টা`, `একত্রিত` |
+| 🇸🇦 Arabic | `ar` | `مهمة`, `خطوة`, `قدرة`, `إعادة_محاولة`, `دمج` |
 
 ```ws
-# Chinese
-任务 "会议处理" {
-    步骤 转录 { 能力: ws-voice }
-}
-
-# Japanese
-タスク "会議処理" {
-    ステップ 転写 { 能力: ws-voice }
-}
-
 # English
-task "meeting" {
-    step transcribe { cap: ws-voice }
+task "image-pipeline" {
+    step download { cap: ws-storage }
+}
+
+# 中文
+任务 "图像处理" {
+    步骤 下载 { 能力: ws-storage }
+}
+
+# 日本語
+タスク "画像処理" {
+    ステップ ダウンロード { 呼出: ws-storage }
+}
+
+# Español
+tarea "procesar-imágenes" {
+    paso descargar { capacidad: ws-storage }
+}
+
+# Français
+tâche "traitement-images" {
+    étape télécharger { capacité: ws-storage }
+}
+
+# العربية
+مهمة "معالجة-الصور" {
+    خطوة تحميل { قدرة: ws-storage }
 }
 ```
 
@@ -52,8 +82,18 @@ ws-lang/
 ├── parser/          # KV line format parser (Go)
 ├── compiler/        # KV → YAML compiler
 ├── schema/          # JSON Schema for instruction sets
-├── translations/    # Multi-language keyword mappings
-├── examples/        # Example instruction sets
+├── translations/    # Multi-language keyword mappings (*.json + generated translations.go)
+├── examples/        # Example instruction sets (10 languages)
+│   ├── meeting-notes.ws       # English
+│   ├── meeting-notes.ws.zh    # Chinese
+│   ├── spanish-test.ws        # Spanish
+│   ├── arabic-test.ws         # Arabic
+│   ├── french-test.ws         # French
+│   ├── portuguese-test.ws     # Portuguese
+│   ├── russian-test.ws        # Russian
+│   ├── hindi-test.ws          # Hindi
+│   ├── bengali-test.ws        # Bengali
+│   └── japanese-test.ws       # Japanese
 └── docs/            # Documentation
 ```
 
@@ -68,6 +108,15 @@ go run compiler/compiler.go examples/meeting-notes.ws
 
 # With translation (Chinese keywords → canonical)
 go run compiler/compiler.go -lang zh examples/meeting-notes.ws.zh
+
+# With translation (Spanish keywords → canonical)
+go run compiler/compiler.go -lang es examples/spanish-test.ws
+
+# With translation (Arabic keywords → canonical)
+go run compiler/compiler.go -lang ar examples/arabic-test.ws
+
+# List all available languages
+ls translations/*.json
 ```
 
 ### 📖 Learn More
